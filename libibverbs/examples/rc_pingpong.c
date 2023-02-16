@@ -335,7 +335,7 @@ static struct pingpong_context *pp_init_ctx(struct ibv_device *ib_dev, int size,
 {
 	struct pingpong_context *ctx;
 	int access_flags = IBV_ACCESS_LOCAL_WRITE;
-
+	//分配空间
 	ctx = calloc(1, sizeof *ctx);
 	if (!ctx)
 		return NULL;
@@ -343,7 +343,7 @@ static struct pingpong_context *pp_init_ctx(struct ibv_device *ib_dev, int size,
 	ctx->size       = size;
 	ctx->send_flags = IBV_SEND_SIGNALED;
 	ctx->rx_depth   = rx_depth;
-
+	//使用memalign函数将分配到的内存对齐到页面大小的边界，以提高内存使用效率。
 	ctx->buf = memalign(page_size, size);
 	if (!ctx->buf) {
 		fprintf(stderr, "Couldn't allocate work buf.\n");
@@ -352,14 +352,14 @@ static struct pingpong_context *pp_init_ctx(struct ibv_device *ib_dev, int size,
 
 	/* FIXME memset(ctx->buf, 0, size); */
 	memset(ctx->buf, 0x7b, size);
-
+	//ibv_open_device() 返回struct ibv_context
 	ctx->context = ibv_open_device(ib_dev);
 	if (!ctx->context) {
 		fprintf(stderr, "Couldn't get context for %s\n",
 			ibv_get_device_name(ib_dev));
 		goto clean_buffer;
 	}
-
+	//是否使用completion channel
 	if (use_event) {
 		ctx->channel = ibv_create_comp_channel(ctx->context);
 		if (!ctx->channel) {
@@ -368,13 +368,13 @@ static struct pingpong_context *pp_init_ctx(struct ibv_device *ib_dev, int size,
 		}
 	} else
 		ctx->channel = NULL;
-
+	//protect domain
 	ctx->pd = ibv_alloc_pd(ctx->context);
 	if (!ctx->pd) {
 		fprintf(stderr, "Couldn't allocate PD\n");
 		goto clean_comp_channel;
 	}
-
+	//use_ts: 是否启用时间戳
 	if (use_odp || use_ts || use_dm) {
 		const uint32_t rc_caps_mask = IBV_ODP_SUPPORT_SEND |
 					      IBV_ODP_SUPPORT_RECV;
@@ -472,26 +472,27 @@ static struct pingpong_context *pp_init_ctx(struct ibv_device *ib_dev, int size,
 		ctx->cq_s.cq_ex = ibv_create_cq_ex(ctx->context, &attr_ex);
 	} else {
 		ctx->cq_s.cq = ibv_create_cq(ctx->context, rx_depth + 1, NULL,
-					     ctx->channel, 0);
+					     ctx->channel, 0); // completion queue和completion channel之间的关系？？
 	}
 
 	if (!pp_cq(ctx)) {
 		fprintf(stderr, "Couldn't create CQ\n");
 		goto clean_mr;
 	}
-
+	//创建QP
 	{
 		struct ibv_qp_attr attr;
+		//QP的初始化结构体
 		struct ibv_qp_init_attr init_attr = {
-			.send_cq = pp_cq(ctx),
+			.send_cq = pp_cq(ctx), //将QP和CP关联起来
 			.recv_cq = pp_cq(ctx),
-			.cap     = {
+			.cap     = {		//QP的容量
 				.max_send_wr  = 1,
 				.max_recv_wr  = rx_depth,
 				.max_send_sge = 1,
 				.max_recv_sge = 1
 			},
-			.qp_type = IBV_QPT_RC
+			.qp_type = IBV_QPT_RC //使用RC连接模式
 		};
 
 		if (use_new_send) {
@@ -522,7 +523,7 @@ static struct pingpong_context *pp_init_ctx(struct ibv_device *ib_dev, int size,
 
 		if (use_new_send)
 			ctx->qpx = ibv_qp_to_qp_ex(ctx->qp);
-
+		//查询QP属性，输出到attr和init_attr
 		ibv_query_qp(ctx->qp, &attr, IBV_QP_CAP, &init_attr);
 		if (init_attr.cap.max_inline_data >= size && !use_dm)
 			ctx->send_flags |= IBV_SEND_INLINE;
@@ -535,7 +536,7 @@ static struct pingpong_context *pp_init_ctx(struct ibv_device *ib_dev, int size,
 			.port_num        = port,
 			.qp_access_flags = 0
 		};
-
+		//修改QP状态
 		if (ibv_modify_qp(ctx->qp, &attr,
 				  IBV_QP_STATE              |
 				  IBV_QP_PKEY_INDEX         |
@@ -818,7 +819,7 @@ int main(int argc, char *argv[])
 
 	while (1) {
 		int c;
-
+		//规定命令行长参数
 		static struct option long_options[] = {
 			{ .name = "port",     .has_arg = 1, .val = 'p' },
 			{ .name = "ib-dev",   .has_arg = 1, .val = 'd' },
@@ -839,16 +840,17 @@ int main(int argc, char *argv[])
 			{ .name = "new_send", .has_arg = 0, .val = 'N' },
 			{}
 		};
-
+		//解析命令行参数
 		c = getopt_long(argc, argv, "p:d:i:s:m:r:n:l:eg:oOPtcjN",
 				long_options, NULL);
 
-		if (c == -1)
+		if (c == -1)	//命令行参数解析的结束标志，跳出while循环
 			break;
 
 		switch (c) {
+		//  listen on/connect to port <port> 
 		case 'p':
-			port = strtoul(optarg, NULL, 0);
+			port = strtoul(optarg, NULL, 0); //将optarg变成无符号整数并作为端口号
 			if (port > 65535) {
 				usage(argv[0]);
 				return 1;
@@ -856,11 +858,11 @@ int main(int argc, char *argv[])
 			break;
 
 		case 'd':
-			ib_devname = strdupa(optarg);
+			ib_devname = strdupa(optarg); //等价于 alloca(strlen(optarg) + 1) 和 strcpy
 			break;
 
 		case 'i':
-			ib_port = strtol(optarg, NULL, 0);
+			ib_port = strtol(optarg, NULL, 0);//将optarg变成long int并作为指定ib设备的端口号
 			if (ib_port < 1) {
 				usage(argv[0]);
 				return 1;
@@ -929,24 +931,27 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 	}
-
-	if (optind == argc - 1)
+	//optind: 数组下标，指向下一个未处理的参数
+	//如果只有一个非选项参数，将其解析为服务器名。
+	if (optind == argc - 1) 
 		servername = strdupa(argv[optind]);
 	else if (optind < argc) {
 		usage(argv[0]);
 		return 1;
 	}
-
+	//use_odp: 表示是否使用ODP（On-Demand Paging）特性。ODP是一种在RDMA操作中提高性能的技术，它允许在进行数据传输时使用延迟较低的分页机制。
+	//use_dm:用于控制是否使用Data Mover (DM)来进行数据传输。DM是在RDMA中提供了更高级别抽象的数据传输接口，它可以在多个数据流之间动态切换，提高传输效率，但需要硬件支持。
+	//两种技术不能同时使用
 	if (use_odp && use_dm) {
 		fprintf(stderr, "DM memory region can't be on demand\n");
 		return 1;
 	}
-
+	//prefetch_mr：prefetch_mr 函数就是用来实现内存区域的缓存预取的
 	if (!use_odp && prefetch_mr) {
 		fprintf(stderr, "prefetch is valid only with on-demand memory region\n");
 		return 1;
 	}
-
+	//初始化了时间戳相关的变量
 	if (use_ts) {
 		ts.comp_recv_max_time_delta = 0;
 		ts.comp_recv_min_time_delta = 0xffffffff;
@@ -955,7 +960,7 @@ int main(int argc, char *argv[])
 		ts.last_comp_with_ts = 0;
 		ts.comp_with_time_iters = 0;
 	}
-
+	//返回系统内存页的大小
 	page_size = sysconf(_SC_PAGESIZE);
 
 	dev_list = ibv_get_device_list(NULL);
@@ -963,14 +968,14 @@ int main(int argc, char *argv[])
 		perror("Failed to get IB devices list");
 		return 1;
 	}
-
+	//未指定IB设备名称
 	if (!ib_devname) {
 		ib_dev = *dev_list;
 		if (!ib_dev) {
 			fprintf(stderr, "No IB devices found\n");
 			return 1;
 		}
-	} else {
+	} else { //指定了IB设备名称
 		int i;
 		for (i = 0; dev_list[i]; ++i)
 			if (!strcmp(ibv_get_device_name(dev_list[i]), ib_devname))
@@ -981,7 +986,11 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 	}
-
+	//ib_dev: 指向struct ibv_device的指针 代表IB设备
+	//size: 传递的信息大小
+	//rx_depth: 在rdma传输过程中用于接收数据的队列深度
+	//ib_port: 
+	//use_event:表示程序是否使用 Completion Event 机制来获取 Completion Queue 中的 Completion。Completion Event 是一种异步方式，应用程序可以阻塞在 ibv_get_cq_event 等待事件的触发。
 	ctx = pp_init_ctx(ib_dev, size, rx_depth, ib_port, use_event);
 	if (!ctx)
 		return 1;
